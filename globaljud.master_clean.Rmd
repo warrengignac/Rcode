@@ -1,0 +1,185 @@
+---
+title: "master_dataset_code"
+author: "Warren Gignac"
+date: "5/3/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60), tidy=TRUE, echo=TRUE)
+library(tidyverse)
+library(dplyr)
+library(countrycode)
+library(formatR)
+setwd("/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/")
+```
+
+## A Global Measure of Judicial Independence, 1900-2015
+
+First we will read in the data for judicial independence that we will be using. This data comes from Linzer and Staton (2012).
+
+```{r, include=TRUE}
+jud_independence_data <- read.csv(file='global_measure_jud_independence.csv')
+head(jud_independence_data)
+```
+
+The following two code chunks contain code for creating some simple data visualizations using this data to track measurements of judicial independence over time. This sample code can be copied later and the countries can be changed (by changing the `filter(country=="")` arguments) to plot whichever country is preferred.
+
+```{r, echo=FALSE, include=TRUE}
+ggplot(jud_independence_data, aes(x=year, color = country)) +
+  geom_line(jud_independence_data %>% filter(country == "Albania"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "Albania"), mapping = aes(y=LJI)) +
+  geom_line(jud_independence_data %>% filter(country == "Spain"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "Spain"), mapping = aes(y=LJI))
+```
+
+
+```{r, include=TRUE}
+ggplot(jud_independence_data, aes(x=year, color = country)) +
+  geom_line(jud_independence_data %>% filter(country == "Mexico"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "Mexico"), mapping = aes(y=LJI), size = 0.4) +
+  geom_line(jud_independence_data %>% filter(country == "United States of America"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "United States of America"), mapping = aes(y=LJI), size = 0.4) +
+  geom_line(jud_independence_data %>% filter(country == "Guatemala"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "Guatemala"), mapping = aes(y=LJI), size = 0.4) +
+  geom_line(jud_independence_data %>% filter(country == "Panama"), mapping = aes(y=LJI)) +
+  geom_point(jud_independence_data %>% filter(country == "Panama"), mapping = aes(y=LJI), size = 0.4) +
+  xlab("Year") +
+  ylab("Measure of Judicial Independence") +
+  scale_color_discrete("Country")
+```
+
+
+## Merging Judicial Independence and Corruption Data Sets
+
+Here we can load the ICRG data from ??? for the purposes of extracting the measurements of corruption and government stability, and we will merge these measurements with the global judicial independence data into one common dataset.
+
+```{r, echo=TRUE}
+ICRG_data <- read.csv(file='ICRG_T3B-data_TSCS_annual2014_corruption.csv')
+corruption_data <- ICRG_data %>% select(year, PRSname, govstab, corrupt)
+names(corruption_data)[names(corruption_data)=="PRSname"] <- "country"
+names(corruption_data)[names(corruption_data)=="govstab"] <- "stability"
+independence_corruption_data <- merge(jud_independence_data, corruption_data, by=c("year", "country")) %>% arrange(country)
+head(independence_corruption_data)
+# write_csv(independence_corruption_data, "/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/Global Jud Independence/ind_corrupt_govstab_data.csv")
+```
+
+Now, we can load and reshape the INGO data from Smith et al (2019). The original dataset we are loading needs to be reshaped significantly to make it suitable for a merge with our previous data. To reshape, we will extract the columns we need, and take the data set and rotate it into a longer pivot table. The resulting pivot table (`ingo_data_long`) will include a dummy variable column, which returns a 1 if the INGO referenced by the `seriesid` column exists in the given country during the given year. 
+
+```{r}
+ingo_data <- read.csv(file='INGO_data_smith.csv')
+ingo_data <- ingo_data %>% select(year, seriesid, algeria:yugoslav) %>% arrange(year)
+head(ingo_data)
+ingo_data_long <- ingo_data %>% pivot_longer(cols= algeria:yugoslav, names_to = "country", values_to = "dummy") %>% arrange("country", year)
+head(ingo_data_long)
+# the dummy column returns a 1 if the organization indicated by the yearbookid
+# column has members in that country
+ingo_data_long <- ingo_data_long[order(ingo_data_long$country), rm.na=TRUE]
+head(ingo_data_long)
+ingo_data_long <- ingo_data_long %>% group_by(country, year)
+head(ingo_data_long)
+```
+
+Working from this output, we want to compress this pivot table such that each row represents a different year for a given country, and the values column in the table counts the number of INGOs that have membership in the given country in the given year. In other words, we want to count the number of 1s in the dummy column for a given country in each year, and use that number as the values observation in each row of the dataframe.
+
+```{r}
+ingo_data_long.panels <- ingo_data_long %>% count(year, country, dummy)
+tibble(ingo_data_long.panels)
+ingo_data_long.panels <- ingo_data_long.panels %>% filter(dummy==1)
+ingo_data_long.panels <- ingo_data_long.panels %>% arrange(country, year) %>% select(-dummy) %>% rename(ingo_total = n)
+head(ingo_data_long.panels)
+```
+
+Our resulting dataframe, `ingo_data_long.panels`, is the dataframe that we want to merge with our previously created dataset for our master dataset. To make the merge easier, we want to make sure that the names of countries contained in the `country` column of both dataframes are the same. Using the `countrycode` package that we loaded into R in the setup chunk, we can see which countries contained in the dataframe are non-traditional country names that will present problems when merging.
+
+```{r}
+x <- countrycode(ingo_data_long.panels$country, origin = "country.name.en", destination = "cown")
+unmatched.countries <- c("argent", "australi", "azerbaij", "banglade", "bermuda", "botswan", "brun_dar", "burkfas", "capeverd", "centafre", "chechnya", "cost_ric", "czech_re", "dom_rep", "east_tim", "el_salv", "faeroeis", "gibraltor", "greenland", "guadeloupe", "guatemal", "guiana_french", "guin_bis", "hong_kon", "indonesi", "isle_of_man", "ivcoast", "kor_rep", "lithuani", "macao", "madagasc", "martinique", "mauritan", "mauritiu", "micronesia", "mozamb", "n_korea", "neth_ant", "netherla", "new_caled", "new_zeal", "nicaragu", "palestin", "philippi", "polynesia", "puerto_r", "reunion", "saudi_ar", "serbia", "seychel", "sier_le", "sri_lank", "st_lucia", "st_martin", "st_vince", "sth_afr", "swazilan", "tahiti", "u_ar_em", "venezuel", "virgin", "westernsahara", "yugoslav")
+codes_df <- countrycode::codelist_panel
+```
+
+The above object `unmatched.countries` contains all of the observations in the `country` column of the `ingo_data_long.panels` dataframe that are not recognized by the `countrycode` package. Some of these are shortened versions of country names, whereas some don't represent countries but rather represent regions or territories. The names not included in the `countrycodes` package are commented in the code chunk below, and they will ultimately just be dropped from the dataframe when we merge, so we do not need to worry about renaming or removing them now. There is no way to systematically change all of these country names (at least not that I am familiar with), so I used a series of `ifelse` statements to change the names of the observations.
+
+```{r}
+## countries not in country codes panel
+# chechnya
+# East Timor
+# gibraltar
+# greenland
+# guadeloupe
+# French Guiana
+# isle of man
+# macau
+# martinique
+# micronesia
+# netherlands antilles
+# new caledonia
+# palestine
+# reunion
+# st martin
+# st vincent and the grenadines
+# tahiti 
+# virgin islands
+# western sahara
+
+ingo_data_long.panels$country <- ifelse(ingo_data_long.panels$country=="afghanis", "Afghanistan", ingo_data_long.panels$country) %>% ifelse(ingo_data_long.panels$country=="argent", "Argentina", .) %>% ifelse(ingo_data_long.panels$country=="australi", "Australia", .) %>% ifelse(ingo_data_long.panels$country=="azerbaij", "Azerbaijan", .) %>% ifelse(ingo_data_long.panels$country=="banglade", "Bangladesh", .) %>% ifelse(ingo_data_long.panels$country=="botswan", "Botswana", .) %>% ifelse(ingo_data_long.panels$country=="brun_dar", "Brunei", .) %>% ifelse(ingo_data_long.panels$country=="burkfas", "Burkina Faso", .) %>% ifelse(ingo_data_long.panels$country=="capeverd", "Cape Verde", .) %>% ifelse(ingo_data_long.panels$country=="centafre", "Central African Republic", .) %>% ifelse(ingo_data_long.panels$country=="chechnya", "Chechnya", .) %>% ifelse(ingo_data_long.panels$country=="cost_ric", "Costa Rica", .) %>% ifelse(ingo_data_long.panels$country=="czech_re", "Czech Republic", .) %>% ifelse(ingo_data_long.panels$country=="dom_rep", "Dominican Republic", .) %>% ifelse(ingo_data_long.panels$country=="east_tim", "East Timor", .) %>% ifelse(ingo_data_long.panels$country=="el_salv", "El Salvador", .) %>% ifelse(ingo_data_long.panels$country=="faeroeis", "Faeroe Islands", .) %>% ifelse(ingo_data_long.panels$country=="gibraltor", "Gibraltar", .) %>% ifelse(ingo_data_long.panels$country=="greenland", "Greenland", .) %>% ifelse(ingo_data_long.panels$country=="guadeloupe", "Guadeloupe", .) %>% ifelse(ingo_data_long.panels$country=="guatemal", "Guatemala", .) %>% ifelse(ingo_data_long.panels$country=="guiana_french", "French Guiana", .) %>% ifelse(ingo_data_long.panels$country=="guin_bis", "Guinea-Bissau", .) %>% ifelse(ingo_data_long.panels$country=="hong_kon", "Hong Kong", .) %>% ifelse(ingo_data_long.panels$country=="indonesi", "Indonesia", .) %>% ifelse(ingo_data_long.panels$country=="isle_of_man", "Isle of Man", .) %>% ifelse(ingo_data_long.panels$country=="ivcoast", "Ivory Coast", .) %>% ifelse(ingo_data_long.panels$country=="kor_rep", "South Korea", .) %>% ifelse(ingo_data_long.panels$country=="lithuani", "Lithuania", .) %>% ifelse(ingo_data_long.panels$country=="macao", "Macau", .) %>% ifelse(ingo_data_long.panels$country=="madagasc", "Madagascar", .) %>% ifelse(ingo_data_long.panels$country=="martinique", "Martinique", .) %>% ifelse(ingo_data_long.panels$country=="mauritan", "Mauritania", .) %>% ifelse(ingo_data_long.panels$country=="mauritiu", "Mauritius", .) %>% ifelse(ingo_data_long.panels$country=="micronesia", "Micronesia", .) %>% ifelse(ingo_data_long.panels$country=="mozamb", "Mozambique", .) %>% ifelse(ingo_data_long.panels$country=="n_korea", "North Korea", .) %>% ifelse(ingo_data_long.panels$country=="netherla", "Netherlands", .) %>% ifelse(ingo_data_long.panels$country=="new_caled", "New Caledonia", .) %>% ifelse(ingo_data_long.panels$country=="new_zeal", "New Zealand", .) %>% ifelse(ingo_data_long.panels$country=="nicaragu", "Nicaragua", .) %>% ifelse(ingo_data_long.panels$country=="palestin", "Palestine", .) %>% ifelse(ingo_data_long.panels$country=="philippi", "Philippines", .) %>% ifelse(ingo_data_long.panels$country=="polynesia", "Polynesia", .) %>% ifelse(ingo_data_long.panels$country=="puerto_r", "Puerto Rico", .) %>% ifelse(ingo_data_long.panels$country=="reunion", "Reunion", .) %>% ifelse(ingo_data_long.panels$country=="saudi_ar", "Saudi Arabia", .) %>% ifelse(ingo_data_long.panels$country=="serbia", "Serbia", .) %>% ifelse(ingo_data_long.panels$country=="seychel", "Seychelles", .) %>% ifelse(ingo_data_long.panels$country=="sier_le", "Sierra Leon", .) %>% ifelse(ingo_data_long.panels$country=="sri_lank", "Sri Lanka", .) %>% ifelse(ingo_data_long.panels$country=="st_lucia", "St. Lucia", .) %>% ifelse(ingo_data_long.panels$country=="st_martin", "St. Martin", .) %>% ifelse(ingo_data_long.panels$country=="st_vince", "St. Vincent", .) %>% ifelse(ingo_data_long.panels$country=="sth_afr", "South Africa", .) %>% ifelse(ingo_data_long.panels$country=="swazilan", "Swaziland", .)
+
+# I broke up the ifelse changes into two commands for the sake of avoiding an error message
+
+ingo_data_long.panels$country <- ifelse(ingo_data_long.panels$country=="tahiti", "Tahiti", ingo_data_long.panels$country) %>% ifelse(ingo_data_long.panels$country=="u_ar_em", "United Arab Emirates", .) %>% ifelse(ingo_data_long.panels$country=="venezuel", "Venezuela", .) %>% ifelse(ingo_data_long.panels$country=="virgin", "Virgin Islands", .) %>% ifelse(ingo_data_long.panels$country=="westernsahara", "Western Sahara", .) %>% ifelse(ingo_data_long.panels$country=="yugoslav", "Yugoslavia", .)
+head(ingo_data_long.panels)
+```
+
+Now the dataframe is prepared for the merge. Since we will be merging by the `country` columns of the two dataframes, the only thing that would hinder the merge is disparities in the case of the observations in the `country` columns. I use the `tolower` command on both dataframes to make the country names uniform and avoid an error.
+
+```{r}
+ingo_data_long.panels$country = tolower(ingo_data_long.panels$country)
+independence_corruption_data$country = tolower(independence_corruption_data$country)
+
+master_data <- merge(independence_corruption_data, ingo_data_long.panels, by= c("year", "country"), all=TRUE) %>% arrange(country)
+master_data <- master_data %>% filter(year>=1984)
+master_data <- master_data %>% filter(country %in% independence_corruption_data$country)
+head(master_data)
+# Code writing the .csv file is commented out to avoid knitting problems
+# write_csv(master_data, "/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/Global Jud Independence/master_dataset.csv")
+# write_csv(ingo_data_long.panels, "/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/Global Jud Independence/reshaped_ingo_data.csv")
+```
+
+The resulting dataframe (`master_data`) and .csv file contain our fully merged master data set for the project.
+
+Smith's INGO data only tracks INGO membership in every other year, whereas our other measures exist in every year. So, we can interpolate the data by finding the midpoint between the year prior and the year after each observation with an NA in the `ingo_total` column. To do this, I added the next observation and the previous observation together (using `lead` and `lag` functions), and then divided by 2. Since this will likely cause some observations in the `ingo_total` column to not be whole numbers, I rounded everything up to the next whole number where applicable. Where this process creates problems is where the country switches in the data (i.e. going from Albania 2013 to Algeria 1984). This will give an inaccurate value in the `ingo_total` column for each observation where `year==1984`. So, I converted every value of `ingo_total` where `year==1984` to `NA`. 
+
+```{r, warning=FALSE}
+master_data_interpolated <- master_data %>% group_by(country) 
+master_data_interpolated$ingo_total <- ifelse(is.na(master_data_interpolated$ingo_total), (lead(master_data_interpolated$ingo_total) + lag(master_data_interpolated$ingo_total))/2, master_data_interpolated$ingo_total)
+master_data_interpolated$ingo_total <- round(master_data_interpolated$ingo_total, digits = 0) 
+# if the interpolated value is not a whole number, we round the value up to the next whole number
+master_data_interpolated$ingo_total <- ifelse(master_data_interpolated$year==1984, master_data_interpolated$ingo_total==NA, master_data_interpolated$ingo_total)
+head(master_data_interpolated %>% filter(year==1984))
+# write_csv(master_data_interpolated, "/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/Global Jud Independence/interpolated_master_dataset.csv")
+```
+
+## CINE Data Format Conversion
+
+Here I convert the CINE data from Stata (.dta) file format to .csv for easier use. For this, I use the `read_dta` command from the `haven` package.
+
+```{r, include=TRUE, eval=FALSE}
+library(haven)
+cine_data <- read_dta(file='CINEvMar2021.dta')
+write_csv(cine_data, "/Users/warrengignac/Desktop/ROCCA/Global Jud Independence/Global Jud Independence/cine_data.csv")
+```
+
+And here are some notes I used that I wanted to keep in the document for later reference if needed.
+
+```{r notes, include=FALSE, eval=FALSE}
+# some useful notes for converting between country identifiers for the ingo_data_long.panels dataframe
+english_names <- codes_df$country.name.en %>% ignore.cas
+ingo_data_long.panels <- ingo_data_long.panels %>% mutate(cowcode = countrycode(ingo_data_long.panels$country %in% english_names, origin = "country.name.en", destination = "cown"))
+
+ingo_data_long.panels$cowcode <- countrycode(ingo_data_long.panels$country, "country.name", "cown")
+not_matched_unambigulously <- c("bermuda", "Chechnya", "Faeroe Islands", "French Guiana", "Gibraltar", "Greenland", "Guadeloupe", "Hong Kong", "Isle of Man", "Macau", "Martinique", "Micronesia", "neth_ant", "New Caledonia", "Palestine", "Polynesia", "Puerto Rico", "Reunion", "Serbia", "St. Martin", "Tahiti", "Virgin Islands", "Western Sahara")
+ingo_data_long.panels <- ingo_data_long.panels %>% rename("ccode" = cowcode)
+tibble(ingo_data_long.panels %>% filter(country=="belarus"))
+```
